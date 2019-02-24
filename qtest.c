@@ -21,10 +21,13 @@
   OK as long as head field of queue_t structure is in first position in solution
   code
 */
+#include "dolist.h"
+#include "list.h"
 #include "queue.h"
 
 #include "console.h"
 #include "report.h"
+
 
 /***** Settable parameters *****/
 
@@ -43,6 +46,11 @@ int big_queue_size = BIG_QUEUE;
 queue_t *q = NULL;
 /* Number of elements in queue */
 size_t qcnt = 0;
+
+/* list being tested */
+struct listitem *p = NULL;
+/* number of elements in list */
+size_t pcnt = 0;
 
 /* How many times can queue operations fail */
 int fail_limit = BIG_QUEUE;
@@ -64,6 +72,16 @@ bool do_show(int argc, char *argv[]);
 bool do_hello(int argc, char *argv[]);
 
 static void queue_init();
+
+#define POOL_NUM 100
+static struct listitem pool_listitem[POOL_NUM];
+static bool pool_valid[POOL_NUM];
+static int pool_cnt = 0;
+static int pool_cur = 0;
+
+static bool show_list(int vlevel);
+bool do_list_add(int argc, char *argv[]);
+
 
 static void console_init()
 {
@@ -475,6 +493,118 @@ bool do_show(int argc, char *argv[])
     }
     return show_queue(0);
 }
+
+static bool show_list(int vlevel)
+{
+    int cnt = 0;
+    bool ok = true;
+    if (p == NULL) {
+        report(vlevel, "p = NULL.\n");
+        return true;
+    }
+    struct listitem *cur_node = p;
+    struct list_head *iter = &(p->list);
+    report_noreturn(vlevel, "p = [ ");
+    if (exception_setup(true)) {
+        while (ok && cur_node != p && cnt < pcnt) {
+            if (cnt < big_queue_size)
+                report_noreturn(vlevel, cnt ? "%d" : "%d", cur_node->i);
+            cnt++;
+            iter = iter->next;
+            cur_node = container_of(iter, struct listitem, list);
+            ok = ok && !error_check();
+        }
+    }
+    exception_cancel();
+    if (!ok) {
+        report(vlevel, "... ]");
+        return false;
+    }
+    if (iter == &(p->list)) {
+        if (cnt <= big_queue_size)
+            report(vlevel, "]");
+        else
+            report(vlevel, " ... ]");
+    } else {
+        report(vlevel, " ... ]");
+        report(vlevel,
+               "ERROR : length of list doesn't match the number of insert and "
+               "delete operations.");
+        ok = false;
+    }
+    return ok;
+}
+
+bool do_show_list(int argc, char *argv[])
+{
+    if (argc != 1) {
+        report(1, "%s takes no arguments", argv[0]);
+        return false;
+    }
+    return show_list(0);
+}
+
+bool do_list_add(int argc, char *argv[])
+{
+    int insert;
+    bool ok = true;
+    if (argc != 2) {
+        report(1, "%s takes 2 arguments.");
+        return false;
+    }
+    if (!get_int(argv[1], &insert)) {
+        report(1, "'%s' is not a valid number.");
+        return false;
+    }
+    if (q == NULL) {
+        report(1, "Calling list_add on null list");
+        return false;
+    }
+    error_check();
+    if (exception_setup(true)) {
+        if (pool_cur >= POOL_NUM) {
+            report(1, "Memory pool is full.");
+            return false;
+        }
+        struct listitem *cur_node = &pool_listitem[pool_cur];
+        struct list_head *node = &(cur_node->list);
+        struct list_head *head = &(p->list);
+        struct list_head *original_next = head->next;
+        pool_valid[pool_cur] = true;
+        pool_cur++;
+        pool_cnt++;
+
+        cur_node->i = insert;
+        list_add(node, head);
+
+        if ((p->list.next) != node) {
+            report(1, "ERROR : New node isn't correctly insert to head.");
+            ok = false;
+        }
+        if ((node->prev) != head) {
+            report(1, "ERROR : Head isn't correctly connected to new node.");
+            ok = false;
+        }
+        if ((original_next->prev) != node) {
+            report(1,
+                   "ERROR : The second node before insertion isn't correctly "
+                   "connected to newly added node.");
+            ok = false;
+        }
+        if ((node->next) != original_next) {
+            report(1,
+                   "ERROR : new node isn't correctly connected to second node "
+                   "before insertion.");
+            ok = false;
+        }
+        if (ok)
+            pcnt++;
+    }
+    exception_cancel();
+    show_list(3);
+    return ok;
+}
+
 
 /* Signal handlers */
 void sigsegvhandler(int sig)
