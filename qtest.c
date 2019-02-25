@@ -508,13 +508,14 @@ static bool show_list(int vlevel)
         report(vlevel, "p = NULL.\n");
         return true;
     }
-    struct listitem *cur_node = &p;
-    struct list_head *iter = &(p.list);
+    struct listitem *cur_node =
+        container_of(p.list.next, struct listitem, list);
+    struct list_head *iter = p.list.next;
     report_noreturn(vlevel, "p = [ ");
     if (exception_setup(true)) {
-        while (ok && cur_node != &p && cnt < pcnt) {
+        while (ok && iter != &(p.list) && cnt < pcnt) {
             if (cnt < big_queue_size)
-                report_noreturn(vlevel, cnt ? "%d" : "%d", cur_node->i);
+                report_noreturn(vlevel, cnt ? "%d " : "%d ", cur_node->i);
             cnt++;
             iter = iter->next;
             cur_node = container_of(iter, struct listitem, list);
@@ -564,6 +565,8 @@ bool do_list_init_head(int argc, char *argv[])
         }
     }
     exception_cancel();
+    if (ok)
+        list_init = true;
     return ok;
 }
 
@@ -598,7 +601,7 @@ bool do_list_add(int argc, char *argv[])
         report(1, "'%s' is already in list.", argv[1]);
         return false;
     }
-    if (q == NULL) {
+    if (false == list_init) {
         report(1, "Calling list_add on null list");
         return false;
     }
@@ -628,6 +631,10 @@ bool do_list_add(int argc, char *argv[])
                    "ERROR : new node isn't correctly connected to second node "
                    "before insertion.");
             ok = false;
+        }
+        if (ok) {
+            pcnt++;
+            pool_valid[insert] = true;
         }
     }
     exception_cancel();
