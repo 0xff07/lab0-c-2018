@@ -48,9 +48,13 @@ queue_t *q = NULL;
 size_t qcnt = 0;
 
 /* list being tested */
-struct listitem *p = NULL;
+struct listitem p;
 /* number of elements in list */
 size_t pcnt = 0;
+#define POOL_NUM 100
+static struct listitem pool_listitem[POOL_NUM];
+static bool pool_valid[POOL_NUM];
+static bool list_init = false;
 
 /* How many times can queue operations fail */
 int fail_limit = BIG_QUEUE;
@@ -73,13 +77,9 @@ bool do_hello(int argc, char *argv[]);
 
 static void queue_init();
 
-#define POOL_NUM 100
-static struct listitem pool_listitem[POOL_NUM];
-static bool pool_valid[POOL_NUM];
-static int pool_cnt = 0;
-static int pool_cur = 0;
-
 static bool show_list(int vlevel);
+bool do_show_list(int argc, char *argv[]);
+bool do_list_init_head(int argc, char *argv[]);
 bool do_list_add(int argc, char *argv[]);
 
 
@@ -104,6 +104,11 @@ static void console_init()
             " [n]            | Compute queue size n times (default: n == 1)");
     add_cmd("show", do_show, "                | Show queue contents");
     add_cmd("hello", do_hello, "                | print Hello, World.");
+    add_cmd("lshow", do_show_list, "                | show linux-list.");
+    add_cmd("linit", do_list_init_head,
+            "                | initialize linux-list.");
+    add_cmd("ladd", do_list_add,
+            "                | add a number to linux-list.");
     add_param("length", &string_length, "Maximum length of displayed string",
               NULL);
     add_param("malloc", &fail_probability, "Malloc failure probability percent",
@@ -494,25 +499,25 @@ bool do_show(int argc, char *argv[])
     return show_queue(0);
 }
 
+
 static bool show_list(int vlevel)
 {
     int cnt = 0;
     bool ok = true;
-    if (p == NULL) {
+    if (list_init == false) {
         report(vlevel, "p = NULL.\n");
         return true;
     }
-    struct listitem *cur_node = p;
-    struct list_head *iter = &(p->list);
+    struct listitem *cur_node = &p;
+    struct list_head *iter = &(p.list);
     report_noreturn(vlevel, "p = [ ");
     if (exception_setup(true)) {
-        while (ok && cur_node != p && cnt < pcnt) {
+        while (ok && cur_node != &p && cnt < pcnt) {
             if (cnt < big_queue_size)
                 report_noreturn(vlevel, cnt ? "%d" : "%d", cur_node->i);
             cnt++;
             iter = iter->next;
             cur_node = container_of(iter, struct listitem, list);
-            ok = ok && !error_check();
         }
     }
     exception_cancel();
@@ -520,7 +525,7 @@ static bool show_list(int vlevel)
         report(vlevel, "... ]");
         return false;
     }
-    if (iter == &(p->list)) {
+    if (iter == &(p.list)) {
         if (cnt <= big_queue_size)
             report(vlevel, "]");
         else
@@ -534,6 +539,34 @@ static bool show_list(int vlevel)
     }
     return ok;
 }
+
+bool do_list_init_head(int argc, char *argv[])
+{
+    if (argc != 1) {
+        report(3, "%s takes exactly 1 argument.");
+        return false;
+    }
+    if (list_init == true) {
+        report(3, "Warning : list is not empty");
+        for (int i = 0; i < POOL_NUM; i++)
+            pool_valid[i] = 0;
+    }
+    bool ok = true;
+    if (exception_setup(true)) {
+        INIT_LIST_HEAD(&(p.list));
+        if (p.list.next != &(p.list)) {
+            report(3, "next field is not properly linked.");
+            ok = false;
+        }
+        if (p.list.prev != &(p.list)) {
+            report(3, "prev field is not properly linked.");
+            ok = false;
+        }
+    }
+    exception_cancel();
+    return ok;
+}
+
 
 bool do_show_list(int argc, char *argv[])
 {
@@ -553,7 +586,16 @@ bool do_list_add(int argc, char *argv[])
         return false;
     }
     if (!get_int(argv[1], &insert)) {
-        report(1, "'%s' is not a valid number.");
+        report(1, "'%s' is not a valid number.", argv[1]);
+        return false;
+    }
+    if (insert >= POOL_NUM || insert < 0) {
+        report(1, "'%s' out of range. Should between 0 and %d.", argv[1],
+               POOL_NUM - 1);
+        return false;
+    }
+    if (pool_valid[insert] == true) {
+        report(1, "'%s' is already in list.", argv[1]);
         return false;
     }
     if (q == NULL) {
@@ -562,22 +604,12 @@ bool do_list_add(int argc, char *argv[])
     }
     error_check();
     if (exception_setup(true)) {
-        if (pool_cur >= POOL_NUM) {
-            report(1, "Memory pool is full.");
-            return false;
-        }
-        struct listitem *cur_node = &pool_listitem[pool_cur];
-        struct list_head *node = &(cur_node->list);
-        struct list_head *head = &(p->list);
-        struct list_head *original_next = head->next;
-        pool_valid[pool_cur] = true;
-        pool_cur++;
-        pool_cnt++;
-
-        cur_node->i = insert;
+        struct list_head *original_next = p.list.next;
+        pool_listitem[insert].i = insert;
+        struct list_head *node = &(pool_listitem[insert].list);
+        struct list_head *head = &(p.list);
         list_add(node, head);
-
-        if ((p->list.next) != node) {
+        if ((p.list.next) != node) {
             report(1, "ERROR : New node isn't correctly insert to head.");
             ok = false;
         }
@@ -597,8 +629,6 @@ bool do_list_add(int argc, char *argv[])
                    "before insertion.");
             ok = false;
         }
-        if (ok)
-            pcnt++;
     }
     exception_cancel();
     show_list(3);
